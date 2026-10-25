@@ -62,9 +62,11 @@ class AiSettingsActivity : AppCompatActivity() {
                     remoteBridge.telegramStatus,
                     remoteBridge.feishuStatus,
                     remoteBridge.clawBotStatus,
-                    remoteBridge.clawBotLoginStatus
-                ) { active, tg, fs, cb, cbLogin ->
-                    active to summarizeRemoteLine(active, tg, fs, cb, cbLogin)
+                    combine(remoteBridge.clawBotLoginStatus, remoteBridge.qqBotStatus) { login, qq ->
+                        login to qq
+                    }
+                ) { active, tg, fs, cb, loginAndQq ->
+                    active to summarizeRemoteLine(active, tg, fs, cb, loginAndQq.first, loginAndQq.second)
                 }.collect { (_, line) ->
                     binding.tvRemoteChannelSummary.text = line
                 }
@@ -77,17 +79,20 @@ class AiSettingsActivity : AppCompatActivity() {
         tg: BridgeStatus,
         fs: BridgeStatus,
         cb: BridgeStatus,
-        cbLogin: ClawBotLoginStatus
+        cbLogin: ClawBotLoginStatus,
+        qq: BridgeStatus
     ): String {
         val mode = when (active) {
             RemoteChannel.TELEGRAM -> "Telegram"
             RemoteChannel.FEISHU -> "飞书"
             RemoteChannel.CLAWBOT -> "ClawBot"
+            RemoteChannel.QQBOT -> "QQ Bot"
         }
         val detail = when (active) {
             RemoteChannel.TELEGRAM -> bridgeShort(tg)
             RemoteChannel.FEISHU -> bridgeShort(fs)
             RemoteChannel.CLAWBOT -> formatClawBotShort(cb, cbLogin)
+            RemoteChannel.QQBOT -> bridgeShort(qq)
         }
         return "当前：$mode · $detail"
     }

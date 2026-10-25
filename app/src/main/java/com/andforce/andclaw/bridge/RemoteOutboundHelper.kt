@@ -17,7 +17,7 @@ object RemoteOutboundHelper {
     }
 
     fun shouldAttemptRemoteEcho(role: String, session: RemoteSession?): Boolean =
-        role != "user" && session != null
+        role != "user" && session != null && session.channel != RemoteChannel.QQBOT
 
     suspend fun sendTyping(
         bridge: IRemoteBridgeService,

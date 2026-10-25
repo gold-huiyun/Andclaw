@@ -1,0 +1,244 @@
+package com.andforce.andclaw.bridge.qqbot
+
+import android.util.Log
+import com.base.services.BridgeStatus
+import com.base.services.RemoteIncomingMessage
+import com.base.services.RemoteSession
+import com.google.gson.Gson
+import com.google.gson.JsonObject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+internal class QqBotBridge(
+    private val scope: CoroutineScope,
+    private val getAppId: () -> String,
+    private val getClientSecret: () -> String,
+    private val getAllowedOpenId: () -> String,
+    private val onInbound: suspend (RemoteIncomingMessage) -> Unit,
+    private val onConnectionStatus: (BridgeStatus) -> Unit
+) {
+    private val api = QqBotApiClient()
+    private val gson = Gson()
+    private val socketScope = CoroutineScope(scope.coroutineContext + Dispatchers.IO)
+    private val webSocketClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(0, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        .build()
+    private val replySequences = ConcurrentHashMap<String, AtomicInteger>()
+
+    private var webSocket: WebSocket? = null
+    private var connectJob: Job? = null
+    private var heartbeatJob: Job? = null
+    private var reconnectJob: Job? = null
+    private var accessToken: String? = null
+    private var tokenExpiresAt = 0L
+    private var lastSequence: Long? = null
+    private var stopped = true
+
+    fun start() {
+        stopInternal(setStatus = false)
+        stopped = false
+        if (getAppId().isBlank() || getClientSecret().isBlank()) {
+            onConnectionStatus(BridgeStatus.NOT_CONFIGURED)
+            return
+        }
+        connect()
+    }
+
+    fun stop() {
+        stopInternal(setStatus = true)
+    }
+
+    private fun stopInternal(setStatus: Boolean) {
+        stopped = true
+        connectJob?.cancel()
+        connectJob = null
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+        reconnectJob?.cancel()
+        reconnectJob = null
+        webSocket?.close(1000, "Client stopped")
+        webSocket = null
+        if (setStatus) onConnectionStatus(BridgeStatus.STOPPED)
+    }
+
+    private fun connect() {
+        if (stopped || connectJob?.isActive == true) return
+        connectJob = socketScope.launch {
+            val appId = getAppId().trim()
+            val secret = getClientSecret().trim()
+            try {
+                val token = getAccessToken(appId, secret)
+                val gateway = api.fetchGatewayUrl(token).getOrThrow()
+                val request = Request.Builder().url(gateway).build()
+                webSocket = webSocketClient.newWebSocket(request, listener(token))
+            } catch (error: Exception) {
+                Log.e(TAG, "QQ Bot connect failed: ${error.message}")
+                onConnectionStatus(BridgeStatus.DISCONNECTED)
+                scheduleReconnect()
+            }
+        }
+    }
+
+    private fun listener(token: String) = object : WebSocketListener() {
+        override fun onOpen(webSocket: WebSocket, response: Response) {
+            Log.d(TAG, "QQ Bot Gateway socket opened")
+        }
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            socketScope.launch { handlePayload(webSocket, text, token) }
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(code, reason)
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            heartbeatJob?.cancel()
+            onConnectionStatus(if (stopped) BridgeStatus.STOPPED else BridgeStatus.DISCONNECTED)
+            if (!stopped && code != 1000) scheduleReconnect()
+        }
+
+        override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
+            Log.e(TAG, "QQ Bot Gateway failure: ${error.message}")
+            heartbeatJob?.cancel()
+            onConnectionStatus(BridgeStatus.DISCONNECTED)
+            if (!stopped) scheduleReconnect()
+        }
+    }
+
+    private suspend fun handlePayload(webSocket: WebSocket, raw: String, token: String) {
+        try {
+            val payload = gson.fromJson(raw, JsonObject::class.java)
+            val op = payload.get("op")?.asInt ?: return
+            when (op) {
+                OP_HELLO -> {
+                    val interval = payload.getAsJsonObject("d")?.get("heartbeat_interval")?.asLong ?: 45000L
+                    startHeartbeat(webSocket, interval)
+                    webSocket.send(buildQqBotIdentifyPayload(token).toString())
+                }
+                OP_DISPATCH -> {
+                    lastSequence = payload.get("s")?.takeUnless { it.isJsonNull }?.asLong ?: lastSequence
+                    if (payload.get("t")?.asString == "READY") {
+                        onConnectionStatus(BridgeStatus.CONNECTED)
+                    } else {
+                        val event = payload.getAsJsonObject("d") ?: return
+                        val incoming = parseQqBotInboundEvent(payload.get("t")?.asString, event)
+                            ?: return
+                        replySequences.clear()
+                        val allowedOpenId = getAllowedOpenId().trim()
+                        if (allowedOpenId.isBlank() || incoming.sessionKey != allowedOpenId) {
+                            sendTextInternal(
+                                RemoteSession(
+                                    channel = com.base.services.RemoteChannel.QQBOT,
+                                    sessionKey = incoming.sessionKey,
+                                    messageId = incoming.messageId
+                                ),
+                                "此 QQ 账号未获授权使用该设备。请在 Andclaw 的 QQ Bot 设置中将此 OpenID 加入白名单：${incoming.sessionKey}"
+                            )
+                        } else {
+                            onInbound(incoming)
+                        }
+                    }
+                }
+                OP_RECONNECT -> webSocket.close(4000, "Gateway requested reconnect")
+                OP_INVALID_SESSION -> webSocket.close(4001, "Invalid session")
+            }
+        } catch (error: Exception) {
+            Log.e(TAG, "Failed to handle QQ Bot Gateway payload: ${error.message}")
+        }
+    }
+
+    private fun startHeartbeat(webSocket: WebSocket, intervalMs: Long) {
+        heartbeatJob?.cancel()
+        heartbeatJob = socketScope.launch {
+            while (isActive && !stopped) {
+                delay(intervalMs)
+                val payload = JsonObject().apply {
+                    addProperty("op", OP_HEARTBEAT)
+                    lastSequence?.let { addProperty("d", it) } ?: add("d", null)
+                }
+                if (!webSocket.send(payload.toString())) break
+            }
+        }
+    }
+
+    private fun scheduleReconnect() {
+        if (stopped || reconnectJob?.isActive == true) return
+        reconnectJob = socketScope.launch {
+            delay(RECONNECT_DELAY_MS)
+            connect()
+        }
+    }
+
+    private suspend fun getAccessToken(appId: String, secret: String): String {
+        val now = System.currentTimeMillis()
+        accessToken?.takeIf { now < tokenExpiresAt - TOKEN_REFRESH_MARGIN_MS }?.let { return it }
+        val token = api.fetchAccessToken(appId, secret).getOrThrow()
+        accessToken = token.value
+        tokenExpiresAt = now + token.expiresInSeconds * 1000L
+        return token.value
+    }
+
+    private suspend fun sendTextInternal(session: RemoteSession, text: String) {
+        val userOpenId = session.sessionKey
+        if (userOpenId.isBlank()) return
+        val token = getAccessToken(getAppId().trim(), getClientSecret().trim())
+        val messageId = session.messageId
+        val ageMs = System.currentTimeMillis() - session.lastIncomingAt
+        val tracker = messageId?.takeIf { ageMs in 0..PASSIVE_REPLY_WINDOW_MS }
+            ?.let { replySequences.getOrPut(it) { AtomicInteger(0) } }
+        val sequence = tracker?.incrementAndGet() ?: 0
+        val passiveMessageId = messageId?.takeIf {
+            sequence in 1..MAX_PASSIVE_REPLIES
+        }
+        api.sendText(token, userOpenId, passiveMessageId, if (passiveMessageId == null) 1 else sequence, text).getOrThrow()
+    }
+
+    suspend fun sendText(session: RemoteSession, text: String) {
+        runCatching { sendTextInternal(session, text) }
+            .onFailure { Log.e(TAG, "QQ Bot sendText failed: ${it.message}") }
+    }
+
+    suspend fun sendPhoto(session: RemoteSession, caption: String?, fileName: String) {
+        sendText(session, "[图片已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    }
+
+    suspend fun sendVideo(session: RemoteSession, caption: String?, fileName: String) {
+        sendText(session, "[视频已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    }
+
+    suspend fun sendAudio(session: RemoteSession, caption: String?, fileName: String) {
+        sendText(session, "[音频已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    }
+
+    suspend fun sendTyping(session: RemoteSession) = Unit
+
+    companion object {
+        private const val TAG = "QqBotBridge"
+        private const val OP_DISPATCH = 0
+        private const val OP_HEARTBEAT = 1
+        private const val OP_IDENTIFY = 2
+        private const val OP_RECONNECT = 7
+        private const val OP_INVALID_SESSION = 9
+        private const val OP_HELLO = 10
+        private const val RECONNECT_DELAY_MS = 5000L
+        private const val TOKEN_REFRESH_MARGIN_MS = 60000L
+        private const val PASSIVE_REPLY_WINDOW_MS = 4 * 60 * 1000L
+        private const val MAX_PASSIVE_REPLIES = 4
+    }
+}

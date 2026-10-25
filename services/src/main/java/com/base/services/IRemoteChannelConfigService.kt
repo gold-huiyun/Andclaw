@@ -29,4 +29,11 @@ interface IRemoteChannelConfigService {
     fun setFeishuAppId(appId: String)
     fun getFeishuAppSecret(): String
     fun setFeishuAppSecret(secret: String)
+
+    fun getQqBotAppId(): String
+    fun setQqBotAppId(appId: String)
+    fun getQqBotClientSecret(): String
+    fun setQqBotClientSecret(clientSecret: String)
+    fun getQqBotAllowedOpenId(): String
+    fun setQqBotAllowedOpenId(openId: String)
 }

@@ -55,6 +55,7 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
         loadChannelConfig()
         observeClawBotStatusLine()
         observeFeishuStatusLine()
+        observeQqBotStatusLine()
         setupConnectionModeChips()
 
         binding.btnTestTg.setOnClickListener { testTelegram() }
@@ -69,6 +70,7 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
         }
 
         binding.btnTestFeishu.setOnClickListener { testFeishu() }
+        binding.btnTestQqBot.setOnClickListener { testQqBot() }
 
         binding.btnSave.setOnClickListener { saveAndFinish() }
     }
@@ -93,13 +95,14 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
             refreshDetailCardVisibility()
         }
 
-    /** 与 Chip 三选一联动，仅展示当前通道的配置卡片。 */
+    /** 与 Chip 联动，仅展示当前通道的配置卡片。 */
     private fun refreshDetailCardVisibility() {
         when (channelConfig.getActiveRemoteChannel()) {
             RemoteChannel.TELEGRAM -> {
                 binding.cardTelegramConfig.visibility = View.VISIBLE
                 binding.cardClawbotConfig.visibility = View.GONE
                 binding.cardFeishuConfig.visibility = View.GONE
+                binding.cardQqbotConfig.visibility = View.GONE
                 cancelClawBotLogin()
                 hideQrCode()
             }
@@ -107,11 +110,21 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
                 binding.cardTelegramConfig.visibility = View.GONE
                 binding.cardClawbotConfig.visibility = View.VISIBLE
                 binding.cardFeishuConfig.visibility = View.GONE
+                binding.cardQqbotConfig.visibility = View.GONE
             }
             RemoteChannel.FEISHU -> {
                 binding.cardTelegramConfig.visibility = View.GONE
                 binding.cardClawbotConfig.visibility = View.GONE
                 binding.cardFeishuConfig.visibility = View.VISIBLE
+                binding.cardQqbotConfig.visibility = View.GONE
+                cancelClawBotLogin()
+                hideQrCode()
+            }
+            RemoteChannel.QQBOT -> {
+                binding.cardTelegramConfig.visibility = View.GONE
+                binding.cardClawbotConfig.visibility = View.GONE
+                binding.cardFeishuConfig.visibility = View.GONE
+                binding.cardQqbotConfig.visibility = View.VISIBLE
                 cancelClawBotLogin()
                 hideQrCode()
             }
@@ -122,6 +135,7 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
         R.id.chip_telegram -> RemoteChannel.TELEGRAM
         R.id.chip_feishu -> RemoteChannel.FEISHU
         R.id.chip_clawbot -> RemoteChannel.CLAWBOT
+        R.id.chip_qqbot -> RemoteChannel.QQBOT
         else -> null
     }
 
@@ -131,6 +145,7 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
             RemoteChannel.TELEGRAM -> binding.chipGroupConnectionMode.check(R.id.chip_telegram)
             RemoteChannel.FEISHU -> binding.chipGroupConnectionMode.check(R.id.chip_feishu)
             RemoteChannel.CLAWBOT -> binding.chipGroupConnectionMode.check(R.id.chip_clawbot)
+            RemoteChannel.QQBOT -> binding.chipGroupConnectionMode.check(R.id.chip_qqbot)
         }
         binding.chipGroupConnectionMode.setOnCheckedChangeListener(chipListener)
     }
@@ -141,6 +156,9 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
         binding.etTgChatId.setText(if (savedChatId == 0L) "" else savedChatId.toString())
         binding.etFeishuAppId.setText(channelConfig.getFeishuAppId())
         binding.etFeishuAppSecret.setText(channelConfig.getFeishuAppSecret())
+        binding.etQqBotAppId.setText(channelConfig.getQqBotAppId())
+        binding.etQqBotClientSecret.setText(channelConfig.getQqBotClientSecret())
+        binding.etQqBotAllowedOpenId.setText(channelConfig.getQqBotAllowedOpenId())
     }
 
     private fun saveAndFinish() {
@@ -149,8 +167,29 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
         channelConfig.setTgChatId(chatId)
         channelConfig.setFeishuAppId(binding.etFeishuAppId.text.toString().trim())
         channelConfig.setFeishuAppSecret(binding.etFeishuAppSecret.text.toString().trim())
+        saveQqBotConfig()
         remoteBridge.startEligibleBridges()
         finish()
+    }
+
+    private fun saveQqBotConfig() {
+        channelConfig.setQqBotAppId(binding.etQqBotAppId.text.toString().trim())
+        channelConfig.setQqBotClientSecret(binding.etQqBotClientSecret.text.toString().trim())
+        channelConfig.setQqBotAllowedOpenId(binding.etQqBotAllowedOpenId.text.toString().trim())
+    }
+
+    private fun testQqBot() {
+        val appId = binding.etQqBotAppId.text.toString().trim()
+        val clientSecret = binding.etQqBotClientSecret.text.toString().trim()
+        if (appId.isBlank() || clientSecret.isBlank()) {
+            binding.tvQqBotStatus.text = "状态: 请填写 AppID 和 ClientSecret"
+            return
+        }
+        channelConfig.setQqBotAppId(appId)
+        channelConfig.setQqBotClientSecret(clientSecret)
+        channelConfig.setQqBotAllowedOpenId(binding.etQqBotAllowedOpenId.text.toString().trim())
+        channelConfig.setActiveRemoteChannel(RemoteChannel.QQBOT)
+        remoteBridge.startQqBotBridgeIfConfigured()
     }
 
     // region ClawBot QR Login
@@ -435,6 +474,21 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
             BridgeStatus.STOPPED -> "已停止"
             BridgeStatus.CONNECTED -> "已连接 ✓"
             BridgeStatus.DISCONNECTED -> "未连接"
+        }
+    }
+
+    private fun observeQqBotStatusLine() {
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                remoteBridge.qqBotStatus.collect { status ->
+                    binding.tvQqBotStatus.text = "状态: " + when (status) {
+                        BridgeStatus.NOT_CONFIGURED -> "未配置"
+                        BridgeStatus.STOPPED -> "已停止"
+                        BridgeStatus.CONNECTED -> "已连接"
+                        BridgeStatus.DISCONNECTED -> "未连接，请检查凭证及开放平台权限"
+                    }
+                }
+            }
         }
     }
 

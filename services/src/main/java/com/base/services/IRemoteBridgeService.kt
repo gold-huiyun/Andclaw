@@ -7,6 +7,7 @@ interface IRemoteBridgeService {
     val clawBotStatus: StateFlow<BridgeStatus>
     val clawBotLoginStatus: StateFlow<ClawBotLoginStatus>
     val feishuStatus: StateFlow<BridgeStatus>
+    val qqBotStatus: StateFlow<BridgeStatus>
 
     fun startEligibleBridges()
     fun stopAllBridges()
@@ -15,12 +16,16 @@ interface IRemoteBridgeService {
     fun startClawBotBridgeIfConfigured(forceRelogin: Boolean = false)
     fun startFeishuBridgeIfConfigured()
     fun stopFeishuBridge()
+    fun startQqBotBridgeIfConfigured()
+    fun stopQqBotBridge()
 
     fun setTelegramInboundHandler(handler: suspend (TgInboundMessage) -> Unit) {}
 
     fun setClawBotInboundHandler(handler: suspend (RemoteIncomingMessage) -> Unit) {}
 
     fun setFeishuInboundHandler(handler: suspend (FeishuInboundMessage) -> Unit) {}
+
+    fun setQqBotInboundHandler(handler: suspend (RemoteIncomingMessage) -> Unit) {}
 
     suspend fun requestClawBotQrCode(): ClawBotQrCodeResult
     suspend fun pollClawBotQrCodeStatus(qrcode: String): ClawBotQrPollResult

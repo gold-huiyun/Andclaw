@@ -56,6 +56,7 @@ object AgentController : ITgBridgeService, IAiConfigService {
 
     /** 远程任务上下文；本地 [startAgent] 会置空，避免误向远程回传。 */
     private var _activeRemoteSession: RemoteSession? = null
+    private var latestQqBotTaskUpdate: String? = null
     val activeRemoteSession: RemoteSession?
         get() = _activeRemoteSession
 
@@ -115,6 +116,9 @@ object AgentController : ITgBridgeService, IAiConfigService {
         }
         remoteBridge.setFeishuInboundHandler { msg ->
             handleFeishuCommand(msg)
+        }
+        remoteBridge.setQqBotInboundHandler { msg ->
+            handleQqBotCommand(msg)
         }
         migrateOldProviderKeys()
         restoreConfig()
@@ -332,10 +336,49 @@ object AgentController : ITgBridgeService, IAiConfigService {
         }
     }
 
+    private suspend fun handleQqBotCommand(msg: RemoteIncomingMessage) {
+        val qqSession = RemoteSession(
+            channel = RemoteChannel.QQBOT,
+            sessionKey = msg.sessionKey,
+            userId = msg.senderId,
+            messageId = msg.messageId,
+            displayName = msg.senderDisplayName,
+            lastIncomingAt = msg.receivedAtMs
+        )
+        when (msg.text.trim()) {
+            "/status" -> {
+                val agentInfo = if (isAgentRunning) "▶️ Agent 运行中: ${uiState.userInput}" else "⏸ Agent 空闲"
+                RemoteOutboundHelper.sendText(
+                    remoteBridge, qqSession,
+                    "Andclaw 状态\n$agentInfo\nQQ OpenID: ${msg.sessionKey}"
+                )
+            }
+            "/stop" -> {
+                withContext(Dispatchers.Main) { stopAgent(sendQqBotSummary = false) }
+                RemoteOutboundHelper.sendText(
+                    remoteBridge, qqSession, "✅ 已停止当前任务"
+                )
+            }
+            else -> {
+                val busy = withContext(Dispatchers.Main) { isAgentRunning to uiState.userInput }
+                if (busy.first) {
+                    RemoteOutboundHelper.sendText(
+                        remoteBridge, qqSession,
+                        "⏳ Agent 正在执行上一任务，不会开始新任务。请稍后或发送 /stop 停止。进行中的任务：${busy.second}"
+                    )
+                    return
+                }
+                RemoteOutboundHelper.sendTyping(remoteBridge, qqSession)
+                withContext(Dispatchers.Main) { startAgent(msg.text, remoteSession = qqSession) }
+            }
+        }
+    }
+
     // --- Agent Logic ---
 
     fun startAgent(input: String, remoteSession: RemoteSession? = null) {
         _activeRemoteSession = remoteSession
+        latestQqBotTaskUpdate = null
         syncLegacyTgChatIdFromSession(remoteSession)
 
         addMessage("user", input)
@@ -353,7 +396,16 @@ object AgentController : ITgBridgeService, IAiConfigService {
         }
     }
 
-    fun stopAgent() {
+    fun stopAgent(sendQqBotSummary: Boolean = true) {
+        val remoteSession = _activeRemoteSession
+        val qqBotSummary = latestQqBotTaskUpdate
+        if (sendQqBotSummary && remoteSession?.channel == RemoteChannel.QQBOT && !qqBotSummary.isNullOrBlank()) {
+            scope.launch(Dispatchers.IO) {
+                RemoteOutboundHelper.sendText(
+                    remoteBridge, remoteSession, "任务结束\n${qqBotSummary.take(1200)}"
+                )
+            }
+        }
         isAgentRunning = false
         uiState = uiState.copy(isRunning = false, status = "Agent Stopped.")
         agentJob?.cancel()
@@ -1016,6 +1068,10 @@ object AgentController : ITgBridgeService, IAiConfigService {
         val msg = ChatMessage(role, content, action, screenshotBase64 = screenshotBase64)
         _messages.update { current -> current + msg }
         Log.d(TAG, "[$role]: $content")
+
+        if (role != "user" && activeRemoteSession?.channel == RemoteChannel.QQBOT) {
+            latestQqBotTaskUpdate = content
+        }
 
         scope.launch(Dispatchers.IO) {
             val entity = ChatMessageEntity(

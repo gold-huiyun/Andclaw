@@ -8,6 +8,7 @@ import com.andforce.andclaw.bridge.clawbot.ClawBotBridge
 import com.andforce.andclaw.bridge.clawbot.buildClawBotAuthStateFromConfirmed
 import com.andforce.andclaw.bridge.clawbot.isCompleteForBridge
 import com.andforce.andclaw.bridge.feishu.FeishuBridge
+import com.andforce.andclaw.bridge.qqbot.QqBotBridge
 import com.base.services.BridgeStatus
 import com.base.services.ClawBotAuthState
 import com.base.services.ClawBotDefaults
@@ -59,6 +60,9 @@ class RemoteBridgeManager(
     private val _feishuStatus = MutableStateFlow(BridgeStatus.NOT_CONFIGURED)
     override val feishuStatus: StateFlow<BridgeStatus> = _feishuStatus.asStateFlow()
 
+    private val _qqBotStatus = MutableStateFlow(BridgeStatus.NOT_CONFIGURED)
+    override val qqBotStatus: StateFlow<BridgeStatus> = _qqBotStatus.asStateFlow()
+
     private val _activeRemoteChannel = MutableStateFlow(RemoteChannel.TELEGRAM)
     override val activeRemoteChannel: StateFlow<RemoteChannel> = _activeRemoteChannel.asStateFlow()
 
@@ -79,6 +83,10 @@ class RemoteBridgeManager(
     private var feishuBridge: FeishuBridge? = null
     private var feishuBridgeActiveAppId: String? = null
     private var feishuInboundHandler: (suspend (FeishuInboundMessage) -> Unit)? = null
+
+    private var qqBotBridge: QqBotBridge? = null
+    private var qqBotBridgeActiveCredentials: Pair<String, String>? = null
+    private var qqBotInboundHandler: (suspend (RemoteIncomingMessage) -> Unit)? = null
 
     private val clawBotApiClient = ClawBotApiClient()
 
@@ -105,6 +113,8 @@ class RemoteBridgeManager(
             tgToken.trim().isNotBlank() -> RemoteChannel.TELEGRAM
             getFeishuAppId().trim().isNotBlank() && getFeishuAppSecret().trim().isNotBlank() ->
                 RemoteChannel.FEISHU
+            getQqBotAppId().trim().isNotBlank() && getQqBotClientSecret().trim().isNotBlank() ->
+                RemoteChannel.QQBOT
             loadClawBotAuthState()?.isCompleteForBridge() == true -> RemoteChannel.CLAWBOT
             else -> RemoteChannel.TELEGRAM
         }
@@ -116,10 +126,12 @@ class RemoteBridgeManager(
         stopTelegramBridge()
         stopClawBotBridgeInternal()
         stopFeishuBridgeInternal()
+        stopQqBotBridgeInternal()
         when (_activeRemoteChannel.value) {
             RemoteChannel.TELEGRAM -> startTelegramBridgeIfConfigured()
             RemoteChannel.CLAWBOT -> startClawBotBridgeIfConfigured(forceRelogin = false)
             RemoteChannel.FEISHU -> startFeishuBridgeIfConfigured()
+            RemoteChannel.QQBOT -> startQqBotBridgeIfConfigured()
         }
     }
 
@@ -135,6 +147,10 @@ class RemoteBridgeManager(
         feishuInboundHandler = handler
     }
 
+    override fun setQqBotInboundHandler(handler: suspend (RemoteIncomingMessage) -> Unit) {
+        qqBotInboundHandler = handler
+    }
+
     override fun startEligibleBridges() {
         applyBridgesForActiveChannel()
     }
@@ -143,6 +159,7 @@ class RemoteBridgeManager(
         stopTelegramBridge()
         stopClawBotBridgeInternal()
         stopFeishuBridgeInternal()
+        stopQqBotBridgeInternal()
     }
 
     override fun startTelegramBridgeIfConfigured() {
@@ -306,6 +323,42 @@ class RemoteBridgeManager(
         _feishuStatus.value = BridgeStatus.STOPPED
     }
 
+    override fun startQqBotBridgeIfConfigured() {
+        val appId = getQqBotAppId().trim()
+        val clientSecret = getQqBotClientSecret().trim()
+        if (appId.isBlank() || clientSecret.isBlank()) {
+            stopQqBotBridgeInternal()
+            _qqBotStatus.value = BridgeStatus.NOT_CONFIGURED
+            return
+        }
+        val credentials = appId to clientSecret
+        if (qqBotBridge != null && qqBotBridgeActiveCredentials == credentials) return
+
+        qqBotBridge?.stop()
+        val bridge = QqBotBridge(
+            scope = scope,
+            getAppId = { getQqBotAppId() },
+            getClientSecret = { getQqBotClientSecret() },
+            getAllowedOpenId = { getQqBotAllowedOpenId() },
+            onInbound = { msg -> qqBotInboundHandler?.invoke(msg) ?: Unit },
+            onConnectionStatus = { status -> _qqBotStatus.value = status }
+        )
+        qqBotBridge = bridge
+        qqBotBridgeActiveCredentials = credentials
+        bridge.start()
+    }
+
+    override fun stopQqBotBridge() {
+        stopQqBotBridgeInternal()
+    }
+
+    private fun stopQqBotBridgeInternal() {
+        qqBotBridge?.stop()
+        qqBotBridge = null
+        qqBotBridgeActiveCredentials = null
+        _qqBotStatus.value = BridgeStatus.STOPPED
+    }
+
     override suspend fun sendTyping(session: RemoteSession) {
         when (session.channel) {
             RemoteChannel.TELEGRAM -> {
@@ -314,6 +367,7 @@ class RemoteBridgeManager(
             }
             RemoteChannel.CLAWBOT -> clawBotBridge?.sendTyping(session)
             RemoteChannel.FEISHU -> feishuBridge?.sendTyping(session)
+            RemoteChannel.QQBOT -> qqBotBridge?.sendTyping(session)
         }
     }
 
@@ -326,6 +380,7 @@ class RemoteBridgeManager(
             }
             RemoteChannel.CLAWBOT -> clawBotBridge?.sendText(session, text)
             RemoteChannel.FEISHU -> feishuBridge?.sendText(session, text)
+            RemoteChannel.QQBOT -> qqBotBridge?.sendText(session, text)
         }
     }
 
@@ -352,6 +407,7 @@ class RemoteBridgeManager(
             RemoteChannel.FEISHU -> {
                 feishuBridge?.sendPhoto(session, photoBytes, caption, fileName)
             }
+            RemoteChannel.QQBOT -> qqBotBridge?.sendPhoto(session, caption, fileName)
         }
     }
 
@@ -379,6 +435,7 @@ class RemoteBridgeManager(
                 val text = "[视频已保存到本地] $fileName${caption?.let { " - $it" } ?: ""}"
                 feishuBridge?.sendText(session, text)
             }
+            RemoteChannel.QQBOT -> qqBotBridge?.sendVideo(session, caption, fileName)
         }
     }
 
@@ -406,6 +463,7 @@ class RemoteBridgeManager(
                 val text = "[音频已保存到本地] $fileName${caption?.let { " - $it" } ?: ""}"
                 feishuBridge?.sendText(session, text)
             }
+            RemoteChannel.QQBOT -> qqBotBridge?.sendAudio(session, caption, fileName)
         }
     }
 
@@ -522,6 +580,47 @@ class RemoteBridgeManager(
         }
     }
 
+    override fun getQqBotAppId(): String =
+        channelPrefs.getString(KEY_QQBOT_APP_ID, "") ?: ""
+
+    override fun setQqBotAppId(appId: String) {
+        val oldAppId = getQqBotAppId()
+        channelPrefs.edit().putString(KEY_QQBOT_APP_ID, appId).apply()
+        if (appId.trim() != oldAppId.trim() && getActiveRemoteChannel() == RemoteChannel.QQBOT) {
+            stopQqBotBridgeInternal()
+            if (appId.isNotBlank() && getQqBotClientSecret().isNotBlank()) {
+                startQqBotBridgeIfConfigured()
+            } else {
+                _qqBotStatus.value = BridgeStatus.NOT_CONFIGURED
+            }
+        }
+    }
+
+    override fun getQqBotClientSecret(): String =
+        channelPrefs.getString(KEY_QQBOT_CLIENT_SECRET, "") ?: ""
+
+    override fun setQqBotClientSecret(clientSecret: String) {
+        val oldSecret = getQqBotClientSecret()
+        channelPrefs.edit().putString(KEY_QQBOT_CLIENT_SECRET, clientSecret).apply()
+        if (clientSecret.trim() != oldSecret.trim() && getQqBotAppId().isNotBlank() &&
+            getActiveRemoteChannel() == RemoteChannel.QQBOT
+        ) {
+            stopQqBotBridgeInternal()
+            if (clientSecret.isNotBlank()) {
+                startQqBotBridgeIfConfigured()
+            } else {
+                _qqBotStatus.value = BridgeStatus.NOT_CONFIGURED
+            }
+        }
+    }
+
+    override fun getQqBotAllowedOpenId(): String =
+        channelPrefs.getString(KEY_QQBOT_ALLOWED_OPEN_ID, "") ?: ""
+
+    override fun setQqBotAllowedOpenId(openId: String) {
+        channelPrefs.edit().putString(KEY_QQBOT_ALLOWED_OPEN_ID, openId.trim()).apply()
+    }
+
     /**
      * 旧版 [RemoteChannelPreferences] 中曾单独存 Telegram；迁移到 agent_config，避免丢配置。
      */
@@ -566,6 +665,9 @@ class RemoteBridgeManager(
 
         const val KEY_FEISHU_APP_ID = "feishu_app_id"
         const val KEY_FEISHU_APP_SECRET = "feishu_app_secret"
+        const val KEY_QQBOT_APP_ID = "qqbot_app_id"
+        const val KEY_QQBOT_CLIENT_SECRET = "qqbot_client_secret"
+        const val KEY_QQBOT_ALLOWED_OPEN_ID = "qqbot_allowed_open_id"
         const val KEY_ACTIVE_REMOTE_CHANNEL = "active_remote_channel"
 
         const val JSON_BOT_TOKEN = "botToken"

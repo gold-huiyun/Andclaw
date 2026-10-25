@@ -175,9 +175,11 @@ open class SetupKioskModeActivity : AppCompatActivity() {
                 remoteBridgeService.telegramStatus,
                 remoteBridgeService.feishuStatus,
                 remoteBridgeService.clawBotStatus,
-                remoteBridgeService.clawBotLoginStatus
-            ) { active, tg, fs, cb, cbLogin ->
-                active to kioskStatusLine(active, tg, fs, cb, cbLogin)
+                combine(remoteBridgeService.clawBotLoginStatus, remoteBridgeService.qqBotStatus) { login, qq ->
+                    login to qq
+                }
+            ) { active, tg, fs, cb, loginAndQq ->
+                active to kioskStatusLine(active, tg, fs, cb, loginAndQq.first, loginAndQq.second)
             }.collect { (active, line) ->
                 binding?.apply {
                     remoteChannelStatus.text = line
@@ -203,6 +205,7 @@ open class SetupKioskModeActivity : AppCompatActivity() {
         R.id.chip_telegram -> RemoteChannel.TELEGRAM
         R.id.chip_feishu -> RemoteChannel.FEISHU
         R.id.chip_clawbot -> RemoteChannel.CLAWBOT
+        R.id.chip_qqbot -> RemoteChannel.QQBOT
         else -> null
     }
 
@@ -213,6 +216,7 @@ open class SetupKioskModeActivity : AppCompatActivity() {
                 RemoteChannel.TELEGRAM -> group.check(R.id.chip_telegram)
                 RemoteChannel.FEISHU -> group.check(R.id.chip_feishu)
                 RemoteChannel.CLAWBOT -> group.check(R.id.chip_clawbot)
+                RemoteChannel.QQBOT -> group.check(R.id.chip_qqbot)
             }
             group.setOnCheckedChangeListener(kioskChipListener)
         }
@@ -222,10 +226,12 @@ open class SetupKioskModeActivity : AppCompatActivity() {
         val tg = remoteBridgeService.telegramStatus.value
         val fs = remoteBridgeService.feishuStatus.value
         val cb = remoteBridgeService.clawBotStatus.value
+        val qq = remoteBridgeService.qqBotStatus.value
         return when (active) {
             RemoteChannel.TELEGRAM -> tg == BridgeStatus.NOT_CONFIGURED || tg == BridgeStatus.DISCONNECTED
             RemoteChannel.FEISHU -> fs == BridgeStatus.NOT_CONFIGURED || fs == BridgeStatus.DISCONNECTED
             RemoteChannel.CLAWBOT -> cb == BridgeStatus.NOT_CONFIGURED || cb == BridgeStatus.DISCONNECTED
+            RemoteChannel.QQBOT -> qq == BridgeStatus.NOT_CONFIGURED || qq == BridgeStatus.DISCONNECTED
         }
     }
 
@@ -234,11 +240,13 @@ open class SetupKioskModeActivity : AppCompatActivity() {
         tg: BridgeStatus,
         fs: BridgeStatus,
         cb: BridgeStatus,
-        cbLogin: ClawBotLoginStatus
+        cbLogin: ClawBotLoginStatus,
+        qq: BridgeStatus
     ): String = when (active) {
         RemoteChannel.TELEGRAM -> bridgeStatusLabel(tg)
         RemoteChannel.FEISHU -> bridgeStatusLabel(fs)
         RemoteChannel.CLAWBOT -> formatClawBotKioskLine(cb, cbLogin)
+        RemoteChannel.QQBOT -> "QQ Bot: ${bridgeStatusLabel(qq)}"
     }
 
     private fun bridgeStatusLabel(status: BridgeStatus): String = when (status) {
