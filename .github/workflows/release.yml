@@ -30,8 +30,13 @@ jobs:
       - name: Extract version from tag
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
-          VERSION="${TAG#v}"
-          VERSION_CODE=$(echo "$VERSION" | awk -F. '{printf "%d", $1*10000+$2*100+$3}')
+          if [[ "$TAG" == "QbotbetaV0.0.1" ]]; then
+            VERSION="$TAG"
+            VERSION_CODE=108
+          else
+            VERSION="${TAG#v}"
+            VERSION_CODE=$(echo "$VERSION" | awk -F. '{printf "%d", $1*10000+$2*100+$3}')
+          fi
           echo "VERSION_NAME=$VERSION" >> $GITHUB_ENV
           echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
 
@@ -46,12 +51,22 @@ jobs:
             -PRELEASE_KEY_ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}" \
             -PRELEASE_KEY_PASSWORD="${{ secrets.ANDROID_KEY_PASSWORD }}"
 
+      - name: Name APK
+        run: cp app/build/outputs/apk/release/Andclaw.apk QbotbetaV0.0.1.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: QbotbetaV0.0.1
+          path: QbotbetaV0.0.1.apk
+          if-no-files-found: error
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           gh release create "$TAG" \
-            app/build/outputs/apk/release/Andclaw.apk \
+            QbotbetaV0.0.1.apk \
             --title "Release $TAG" \
             --generate-notes
