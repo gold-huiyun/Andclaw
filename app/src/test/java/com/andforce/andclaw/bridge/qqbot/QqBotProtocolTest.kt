@@ -42,4 +42,20 @@ class QqBotProtocolTest {
         assertNull(parseQqBotInboundEvent("GROUP_AT_MESSAGE_CREATE", event))
         assertNull(parseQqBotInboundEvent("C2C_MESSAGE_CREATE", event))
     }
+
+    @Test
+    fun mediaMessage_containsFileInfoCaptionAndPassiveReplyFields() {
+        val payload = buildQqBotMediaMessagePayload(
+            fileInfo = "opaque-file-info",
+            messageId = "message-2",
+            sequence = 2,
+            caption = "Screenshot"
+        )
+
+        assertEquals(7, payload.get("msg_type").asInt)
+        assertEquals("opaque-file-info", payload.getAsJsonObject("media").get("file_info").asString)
+        assertEquals("Screenshot", payload.get("content").asString)
+        assertEquals("message-2", payload.get("msg_id").asString)
+        assertEquals(2, payload.get("msg_seq").asInt)
+    }
 }

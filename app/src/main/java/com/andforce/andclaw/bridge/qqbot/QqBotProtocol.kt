@@ -19,6 +19,23 @@ internal fun buildQqBotIdentifyPayload(accessToken: String): JsonObject = JsonOb
     })
 }
 
+internal fun buildQqBotMediaMessagePayload(
+    fileInfo: String,
+    messageId: String?,
+    sequence: Int,
+    caption: String?
+): JsonObject = JsonObject().apply {
+    addProperty("msg_type", 7)
+    add("media", JsonObject().apply { addProperty("file_info", fileInfo) })
+    if (!caption.isNullOrBlank()) addProperty("content", caption)
+    if (!messageId.isNullOrBlank()) {
+        addProperty("msg_id", messageId)
+        addProperty("msg_seq", sequence)
+    } else {
+        addProperty("msg_seq", 1)
+    }
+}
+
 internal fun parseQqBotInboundEvent(eventName: String?, event: JsonObject): RemoteIncomingMessage? {
     if (eventName != "C2C_MESSAGE_CREATE") return null
 

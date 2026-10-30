@@ -1,0 +1,70 @@
+name: QBot Beta APK
+
+on:
+  push:
+    branches:
+      - qbotbeta
+    tags:
+      - 'QbotbetaV*'
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: Beta version name
+        required: false
+        default: QbotbetaV0.0.2
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Configure Android SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > local.properties
+
+      - name: Resolve beta version
+        env:
+          MANUAL_VERSION: ${{ inputs.version_name }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            VERSION_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION_NAME="${MANUAL_VERSION:-QbotbetaV0.0.2}"
+          fi
+          echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=109" >> "$GITHUB_ENV"
+
+      - name: Run unit tests and build debug-signed APK
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:testDebugUnitTest :app:assembleDebug \
+            -PVERSION_NAME="$VERSION_NAME" \
+            -PVERSION_CODE="$VERSION_CODE"
+
+      - name: Name APK
+        run: cp app/build/outputs/apk/debug/Andclaw.apk "${VERSION_NAME}.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Qbotbeta-${{ github.ref_name }}
+          path: Qbotbeta*.apk
+          if-no-files-found: error
+
+      - name: Publish tagged beta release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body: Debug-signed QBot beta APK.
+          files: Qbotbeta*.apk

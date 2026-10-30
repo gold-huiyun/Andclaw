@@ -407,7 +407,7 @@ class RemoteBridgeManager(
             RemoteChannel.FEISHU -> {
                 feishuBridge?.sendPhoto(session, photoBytes, caption, fileName)
             }
-            RemoteChannel.QQBOT -> qqBotBridge?.sendPhoto(session, caption, fileName)
+            RemoteChannel.QQBOT -> qqBotBridge?.sendPhoto(session, photoBytes, caption, fileName)
         }
     }
 
@@ -435,7 +435,7 @@ class RemoteBridgeManager(
                 val text = "[视频已保存到本地] $fileName${caption?.let { " - $it" } ?: ""}"
                 feishuBridge?.sendText(session, text)
             }
-            RemoteChannel.QQBOT -> qqBotBridge?.sendVideo(session, caption, fileName)
+            RemoteChannel.QQBOT -> qqBotBridge?.sendVideo(session, videoBytes, caption, fileName)
         }
     }
 
@@ -463,7 +463,7 @@ class RemoteBridgeManager(
                 val text = "[音频已保存到本地] $fileName${caption?.let { " - $it" } ?: ""}"
                 feishuBridge?.sendText(session, text)
             }
-            RemoteChannel.QQBOT -> qqBotBridge?.sendAudio(session, caption, fileName)
+            RemoteChannel.QQBOT -> qqBotBridge?.sendAudio(session, audioBytes, caption, fileName)
         }
     }
 

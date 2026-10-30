@@ -198,15 +198,8 @@ internal class QqBotBridge(
         val userOpenId = session.sessionKey
         if (userOpenId.isBlank()) return
         val token = getAccessToken(getAppId().trim(), getClientSecret().trim())
-        val messageId = session.messageId
-        val ageMs = System.currentTimeMillis() - session.lastIncomingAt
-        val tracker = messageId?.takeIf { ageMs in 0..PASSIVE_REPLY_WINDOW_MS }
-            ?.let { replySequences.getOrPut(it) { AtomicInteger(0) } }
-        val sequence = tracker?.incrementAndGet() ?: 0
-        val passiveMessageId = messageId?.takeIf {
-            sequence in 1..MAX_PASSIVE_REPLIES
-        }
-        api.sendText(token, userOpenId, passiveMessageId, if (passiveMessageId == null) 1 else sequence, text).getOrThrow()
+        val reply = nextReplyReference(session)
+        api.sendText(token, userOpenId, reply.messageId, reply.sequence, text).getOrThrow()
     }
 
     suspend fun sendText(session: RemoteSession, text: String) {
@@ -214,16 +207,53 @@ internal class QqBotBridge(
             .onFailure { Log.e(TAG, "QQ Bot sendText failed: ${it.message}") }
     }
 
-    suspend fun sendPhoto(session: RemoteSession, caption: String?, fileName: String) {
-        sendText(session, "[图片已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    suspend fun sendPhoto(session: RemoteSession, photoBytes: ByteArray, caption: String?, fileName: String) {
+        sendMediaOrFallback(session, photoBytes, fileName, FILE_TYPE_IMAGE, caption, "图片")
     }
 
-    suspend fun sendVideo(session: RemoteSession, caption: String?, fileName: String) {
-        sendText(session, "[视频已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    suspend fun sendVideo(session: RemoteSession, videoBytes: ByteArray, caption: String?, fileName: String) {
+        sendMediaOrFallback(session, videoBytes, fileName, FILE_TYPE_VIDEO, caption, "视频")
     }
 
-    suspend fun sendAudio(session: RemoteSession, caption: String?, fileName: String) {
-        sendText(session, "[音频已保存在设备本地] $fileName${caption?.let { " - $it" }.orEmpty()}")
+    suspend fun sendAudio(session: RemoteSession, audioBytes: ByteArray, caption: String?, fileName: String) {
+        sendMediaOrFallback(session, audioBytes, fileName, FILE_TYPE_FILE, caption, "音频文件")
+    }
+
+    private suspend fun sendMediaOrFallback(
+        session: RemoteSession,
+        fileBytes: ByteArray,
+        fileName: String,
+        fileType: Int,
+        caption: String?,
+        mediaLabel: String
+    ) {
+        try {
+            val userOpenId = session.sessionKey
+            require(userOpenId.isNotBlank()) { "QQ 用户 OpenID 为空" }
+            val token = getAccessToken(getAppId().trim(), getClientSecret().trim())
+            val fileInfo = api.uploadMedia(token, userOpenId, fileBytes, fileName, fileType).getOrThrow()
+            val reply = nextReplyReference(session)
+            api.sendMedia(
+                token,
+                userOpenId,
+                buildQqBotMediaMessagePayload(fileInfo, reply.messageId, reply.sequence, caption)
+            ).getOrThrow()
+        } catch (error: Exception) {
+            Log.e(TAG, "QQ Bot $mediaLabel send failed: ${error.message}")
+            runCatching {
+                sendTextInternal(session, "${mediaLabel}发送失败，文件仍保存在设备本地：$fileName (${error.message ?: "未知错误"})")
+            }.onFailure { Log.e(TAG, "QQ Bot media failure notice failed: ${it.message}") }
+        }
+    }
+
+    private fun nextReplyReference(session: RemoteSession): ReplyReference {
+        val messageId = session.messageId
+        val ageMs = System.currentTimeMillis() - session.lastIncomingAt
+        val tracker = messageId?.takeIf { ageMs in 0..PASSIVE_REPLY_WINDOW_MS }
+            ?.let { replySequences.getOrPut(it) { AtomicInteger(0) } }
+        val sequence = tracker?.incrementAndGet() ?: 0
+        val passiveMessageId = messageId?.takeIf { sequence in 1..MAX_PASSIVE_REPLIES }
+        return ReplyReference(passiveMessageId, if (passiveMessageId == null) 1 else sequence)
     }
 
     suspend fun sendTyping(session: RemoteSession) = Unit
@@ -240,5 +270,10 @@ internal class QqBotBridge(
         private const val TOKEN_REFRESH_MARGIN_MS = 60000L
         private const val PASSIVE_REPLY_WINDOW_MS = 4 * 60 * 1000L
         private const val MAX_PASSIVE_REPLIES = 4
+        private const val FILE_TYPE_IMAGE = 1
+        private const val FILE_TYPE_VIDEO = 2
+        private const val FILE_TYPE_FILE = 4
     }
+
+    private data class ReplyReference(val messageId: String?, val sequence: Int)
 }
