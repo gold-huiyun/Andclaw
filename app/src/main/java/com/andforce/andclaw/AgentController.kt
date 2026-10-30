@@ -21,6 +21,7 @@ import com.andforce.andclaw.db.ChatMessageDao
 import com.andforce.andclaw.db.ChatMessageEntity
 import com.google.gson.Gson
 import com.andforce.andclaw.bridge.RemoteOutboundHelper
+import com.andforce.andclaw.bridge.qqbot.QqBotTaskReporter
 import com.base.services.BridgeStatus
 import com.base.services.FeishuInboundMessage
 import com.base.services.IAiConfigService
@@ -56,7 +57,7 @@ object AgentController : ITgBridgeService, IAiConfigService {
 
     /** 远程任务上下文；本地 [startAgent] 会置空，避免误向远程回传。 */
     private var _activeRemoteSession: RemoteSession? = null
-    private var latestQqBotTaskUpdate: String? = null
+    private val qqBotTaskReporter = QqBotTaskReporter()
     val activeRemoteSession: RemoteSession?
         get() = _activeRemoteSession
 
@@ -378,8 +379,18 @@ object AgentController : ITgBridgeService, IAiConfigService {
 
     fun startAgent(input: String, remoteSession: RemoteSession? = null) {
         _activeRemoteSession = remoteSession
-        latestQqBotTaskUpdate = null
+        qqBotTaskReporter.reset()
         syncLegacyTgChatIdFromSession(remoteSession)
+
+        if (remoteSession?.channel == RemoteChannel.QQBOT) {
+            scope.launch(Dispatchers.IO) {
+                RemoteOutboundHelper.sendText(
+                    remoteBridge,
+                    remoteSession,
+                    "📩 已收到任务，正在处理：${input.take(180)}"
+                )
+            }
+        }
 
         addMessage("user", input)
         isAgentRunning = true
@@ -398,11 +409,11 @@ object AgentController : ITgBridgeService, IAiConfigService {
 
     fun stopAgent(sendQqBotSummary: Boolean = true) {
         val remoteSession = _activeRemoteSession
-        val qqBotSummary = latestQqBotTaskUpdate
-        if (sendQqBotSummary && remoteSession?.channel == RemoteChannel.QQBOT && !qqBotSummary.isNullOrBlank()) {
+        val qqBotSummary = qqBotTaskReporter.buildFinalMessage()
+        if (sendQqBotSummary && remoteSession?.channel == RemoteChannel.QQBOT) {
             scope.launch(Dispatchers.IO) {
                 RemoteOutboundHelper.sendText(
-                    remoteBridge, remoteSession, "任务结束\n${qqBotSummary.take(1200)}"
+                    remoteBridge, remoteSession, qqBotSummary
                 )
             }
         }
@@ -1070,7 +1081,15 @@ object AgentController : ITgBridgeService, IAiConfigService {
         Log.d(TAG, "[$role]: $content")
 
         if (role != "user" && activeRemoteSession?.channel == RemoteChannel.QQBOT) {
-            latestQqBotTaskUpdate = content
+            val remoteSession = activeRemoteSession
+            val progress = qqBotTaskReporter.record(role, content, action)
+            if (progress != null && remoteSession != null) {
+                scope.launch(Dispatchers.IO) {
+                    RemoteOutboundHelper.sendText(
+                        remoteBridge, remoteSession, "🔄 处理中：$progress"
+                    )
+                }
+            }
         }
 
         scope.launch(Dispatchers.IO) {

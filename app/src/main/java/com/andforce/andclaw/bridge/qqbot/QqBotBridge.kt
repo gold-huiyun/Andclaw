@@ -13,6 +13,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -39,6 +41,7 @@ internal class QqBotBridge(
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     private val replySequences = ConcurrentHashMap<String, AtomicInteger>()
+    private val outboundMutex = Mutex()
 
     private var webSocket: WebSocket? = null
     private var connectJob: Job? = null
@@ -151,7 +154,7 @@ internal class QqBotBridge(
                         replySequences.clear()
                         val allowedOpenId = getAllowedOpenId().trim()
                         if (allowedOpenId.isBlank() || incoming.sessionKey != allowedOpenId) {
-                            sendTextInternal(
+                            sendText(
                                 RemoteSession(
                                     channel = com.base.services.RemoteChannel.QQBOT,
                                     sessionKey = incoming.sessionKey,
@@ -212,8 +215,10 @@ internal class QqBotBridge(
     }
 
     suspend fun sendText(session: RemoteSession, text: String) {
-        runCatching { sendTextInternal(session, text) }
-            .onFailure { Log.e(TAG, "QQ Bot sendText failed: ${it.message}") }
+        outboundMutex.withLock {
+            runCatching { sendTextInternal(session, text) }
+                .onFailure { Log.e(TAG, "QQ Bot sendText failed: ${it.message}") }
+        }
     }
 
     suspend fun sendPhoto(session: RemoteSession, photoBytes: ByteArray, caption: String?, fileName: String) {
@@ -235,7 +240,7 @@ internal class QqBotBridge(
         fileType: Int,
         caption: String?,
         mediaLabel: String
-    ) {
+    ) = outboundMutex.withLock {
         try {
             val userOpenId = session.sessionKey
             require(userOpenId.isNotBlank()) { "QQ 用户 OpenID 为空" }

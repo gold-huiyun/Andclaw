@@ -11,7 +11,7 @@ on:
       version_name:
         description: Beta version name
         required: false
-        default: QbotbetaV0.0.3
+        default: QbotbetaV0.0.4
 
 permissions:
   contents: write
@@ -44,10 +44,10 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             VERSION_NAME="${GITHUB_REF#refs/tags/}"
           else
-            VERSION_NAME="${MANUAL_VERSION:-QbotbetaV0.0.3}"
+            VERSION_NAME="${MANUAL_VERSION:-QbotbetaV0.0.4}"
           fi
           echo "VERSION_NAME=$VERSION_NAME" >> "$GITHUB_ENV"
-          echo "VERSION_CODE=110" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=111" >> "$GITHUB_ENV"
 
       - name: Run unit tests and build debug-signed APK
         run: |
@@ -72,11 +72,13 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           body: |
-            QBot beta release, signed with the Android debug key.
+            QBot beta 测试版，使用 GitHub Actions runner 生成的 Android Debug 密钥签名。
+            签名与 QbotbetaV0.0.3 不同，无法直接覆盖安装；请先卸载旧版再安装本版，卸载会清除应用本地数据。
 
-            ## What's New
-            - Show QQ Bot credential validation, Gateway connection progress, and server error details in settings.
-            - Upload and send screenshots, images, videos, and files through the QQ official rich-media API.
-            - Keep AI and remote-channel settings inside the setup task when returning from their screens.
-            - Improve AI API network error details and retry transient connection-establishment failures once.
+            ## 更新内容
+            - QQ Bot 任务会回报开始确认、执行进度和实际结果，不再只发送通用的“Finished.”。
+            - 支持 QQ 官方富媒体接口回传截图、图片、视频和文件。
+            - 设置页显示 QQ 凭证验证、Gateway 连接状态与服务端错误详情。
+            - AI 与远程通道设置返回后留在应用设置流程中。
+            - 改进 AI API 网络错误详情，并对短暂的连接建立失败重试一次。
           files: Qbotbeta*.apk
