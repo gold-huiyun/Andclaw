@@ -480,12 +480,26 @@ class RemoteChannelSettingsActivity : AppCompatActivity() {
     private fun observeQqBotStatusLine() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                remoteBridge.qqBotStatus.collect { status ->
-                    binding.tvQqBotStatus.text = "状态: " + when (status) {
-                        BridgeStatus.NOT_CONFIGURED -> "未配置"
-                        BridgeStatus.STOPPED -> "已停止"
-                        BridgeStatus.CONNECTED -> "已连接"
-                        BridgeStatus.DISCONNECTED -> "未连接，请检查凭证及开放平台权限"
+                combine(remoteBridge.qqBotStatus, remoteBridge.qqBotStatusMessage) { status, message ->
+                    status to message
+                }.collect { (status, message) ->
+                    val connecting = status == BridgeStatus.DISCONNECTED && message.startsWith("正在")
+                    binding.tvQqBotStatus.text = "状态: $message"
+                    binding.tvQqBotStatus.setTextColor(
+                        getColor(
+                            when {
+                                status == BridgeStatus.CONNECTED -> android.R.color.holo_green_dark
+                                connecting -> android.R.color.holo_orange_dark
+                                status == BridgeStatus.DISCONNECTED -> android.R.color.holo_red_dark
+                                else -> R.color.mdm_text_secondary
+                            }
+                        )
+                    )
+                    binding.btnTestQqBot.isEnabled = !connecting
+                    if (connecting) {
+                        binding.btnTestQqBot.text = "正在连接…"
+                    } else {
+                        binding.btnTestQqBot.text = "保存并连接 QQ Bot"
                     }
                 }
             }

@@ -28,7 +28,7 @@ internal class QqBotBridge(
     private val getClientSecret: () -> String,
     private val getAllowedOpenId: () -> String,
     private val onInbound: suspend (RemoteIncomingMessage) -> Unit,
-    private val onConnectionStatus: (BridgeStatus) -> Unit
+    private val onConnectionStatus: (BridgeStatus, String) -> Unit
 ) {
     private val api = QqBotApiClient()
     private val gson = Gson()
@@ -53,9 +53,10 @@ internal class QqBotBridge(
         stopInternal(setStatus = false)
         stopped = false
         if (getAppId().isBlank() || getClientSecret().isBlank()) {
-            onConnectionStatus(BridgeStatus.NOT_CONFIGURED)
+            onConnectionStatus(BridgeStatus.NOT_CONFIGURED, "请填写 QQ Bot AppID 和 ClientSecret")
             return
         }
+        onConnectionStatus(BridgeStatus.DISCONNECTED, "正在验证 AppID/ClientSecret 并连接 QQ Gateway…")
         connect()
     }
 
@@ -73,7 +74,7 @@ internal class QqBotBridge(
         reconnectJob = null
         webSocket?.close(1000, "Client stopped")
         webSocket = null
-        if (setStatus) onConnectionStatus(BridgeStatus.STOPPED)
+        if (setStatus) onConnectionStatus(BridgeStatus.STOPPED, "已停止")
     }
 
     private fun connect() {
@@ -88,7 +89,10 @@ internal class QqBotBridge(
                 webSocket = webSocketClient.newWebSocket(request, listener(token))
             } catch (error: Exception) {
                 Log.e(TAG, "QQ Bot connect failed: ${error.message}")
-                onConnectionStatus(BridgeStatus.DISCONNECTED)
+                onConnectionStatus(
+                    BridgeStatus.DISCONNECTED,
+                    error.message ?: "连接 QQ Bot 失败，请检查 AppID、ClientSecret 和网络"
+                )
                 scheduleReconnect()
             }
         }
@@ -97,6 +101,7 @@ internal class QqBotBridge(
     private fun listener(token: String) = object : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             Log.d(TAG, "QQ Bot Gateway socket opened")
+            onConnectionStatus(BridgeStatus.DISCONNECTED, "Gateway WebSocket 已连接，等待机器人就绪…")
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
@@ -109,14 +114,18 @@ internal class QqBotBridge(
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
             heartbeatJob?.cancel()
-            onConnectionStatus(if (stopped) BridgeStatus.STOPPED else BridgeStatus.DISCONNECTED)
+            onConnectionStatus(
+                if (stopped) BridgeStatus.STOPPED else BridgeStatus.DISCONNECTED,
+                if (stopped) "已停止" else "Gateway 连接关闭 (code=$code${reason.takeIf(String::isNotBlank)?.let { ", $it" }.orEmpty()})"
+            )
             if (!stopped && code != 1000) scheduleReconnect()
         }
 
         override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
             Log.e(TAG, "QQ Bot Gateway failure: ${error.message}")
             heartbeatJob?.cancel()
-            onConnectionStatus(BridgeStatus.DISCONNECTED)
+            val httpStatus = response?.code?.let { "HTTP $it: " }.orEmpty()
+            onConnectionStatus(BridgeStatus.DISCONNECTED, "Gateway 连接失败：$httpStatus${error.message ?: "未知网络错误"}")
             if (!stopped) scheduleReconnect()
         }
     }
@@ -134,7 +143,7 @@ internal class QqBotBridge(
                 OP_DISPATCH -> {
                     lastSequence = payload.get("s")?.takeUnless { it.isJsonNull }?.asLong ?: lastSequence
                     if (payload.get("t")?.asString == "READY") {
-                        onConnectionStatus(BridgeStatus.CONNECTED)
+                        onConnectionStatus(BridgeStatus.CONNECTED, "QQ Bot 已连接，可以开始使用")
                     } else {
                         val event = payload.getAsJsonObject("d") ?: return
                         val incoming = parseQqBotInboundEvent(payload.get("t")?.asString, event)

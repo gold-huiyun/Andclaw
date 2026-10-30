@@ -30,7 +30,7 @@
 | **🤏 拟人操作** | 模拟点击、滑动、长按、文本输入等手势操作 |
 | **📸 多媒体能力** | 拍照、录像、录屏、截图、音量控制 |
 | **📱 设备管控** | Device Owner 模式下支持企业级设备管理（静默装卸、Kiosk 等） |
-| **🤖 远程控制** | **Telegram Bot** 或 **微信 ClawBot（基于 iLink）** 双通道：远程下发指令；截图/媒体回传能力因通道而异（见下文） |
+| **🤖 远程控制** | Telegram、飞书、微信 ClawBot、QQ 官方机器人：远程下发指令并按通道能力回传结果与媒体 |
 | **🌍 多语言支持** | 支持中文、英文界面切换 |
 
 ## 📋 与其他方案对比
@@ -40,7 +40,7 @@
 | 无需电脑 | ✅ | ❌ 需 PC 运行 Python | ✅ | ✅ |
 | 无需专用硬件 | ✅ | ✅ | ✅ | ❌ 需购买 3499 元工程机 |
 | 无需 Shizuku / ADB | ✅ 无障碍服务 | ❌ ADB 控制 | ❌ 依赖 Shizuku | ✅ |
-| 远程控制 | ✅ Telegram / ClawBot | ❌ | ❌ | ❌ |
+| 远程控制 | ✅ Telegram / 飞书 / ClawBot / QQ Bot | ❌ | ❌ | ❌ |
 | 自定义模型 | ✅ 多 Provider | ✅ | ✅ | ❌ 仅豆包 |
 | 开源 | ✅ | ✅ | ✅ | ❌ |
 | 原生 Android | ✅ Kotlin | ❌ Python | ✅ Kotlin | ✅ |
@@ -48,7 +48,7 @@
 
 **Andclaw 的核心差异**：
 - **零外部依赖**：基于 Android 无障碍服务，无需 Shizuku 初始化、无需 ADB 连接、无需电脑
-- **远程控制**：支持 **Telegram Bot** 与 **微信 ClawBot（基于 iLink）** 两种通道远程下发指令；截图与多媒体回传在 Telegram 侧为真实文件发送，在 ClawBot 侧当前为**文本降级说明**（详见「远程通道」）
+- **远程控制**：支持 Telegram、飞书、微信 ClawBot 和 QQ 官方机器人；QQ Bot 私聊支持指令、截图及图片/视频/文件回传（详见「远程通道」）
 - **UI 层级 + 视觉双模感知**：优先解析 Accessibility 节点树，WebView/浏览器场景自动切换截图分析
 - **循环检测 + 截图重试**：同一动作重复 5 次自动截图视觉重试，避免 Agent 死循环
 
@@ -178,7 +178,7 @@ AI 返回 JSON 操作决策
 | `long_press` | 长按，支持自定义时长 |
 | `text_input` | 向当前焦点输入框注入文本（SET_TEXT → 剪贴板粘贴 fallback） |
 | `global_action` | 系统级操作：返回、Home、最近任务、通知栏、快捷设置 |
-| `screenshot` | 截图并保存到 `Pictures/Andclaw/`；远程会话为 Telegram 时自动发送图片；为 ClawBot 时由应用**尝试**发送文本说明（本仓库未接 iLink 媒体上传协议，且桥未就绪时可能无法发出） |
+| `screenshot` | 截图并保存到 `Pictures/Andclaw/`；Telegram、飞书和 QQ Bot 远程会话会按通道协议回传图片 |
 | `download` | 通过 DownloadManager 直接下载文件（无需打开浏览器） |
 | `wait` | 等待页面加载/UI 过渡完成后重新检查屏幕（最长 10 秒） |
 | `camera` | 拍照（`take_photo`）、开始录像（`start_video`）、停止录像（`stop_video`） |
@@ -209,11 +209,11 @@ Moonshot AI 提供了两套独立的 API 服务，API Key **不通用**：
 | **API Key 获取** | [Kimi Code 会员页面](https://www.kimi.com/code/console) | [Moonshot 开放平台](https://platform.moonshot.cn/console/api-keys) |
 | **定位** | 专为 Coding Agent 优化 | 通用 LLM API |
 
-### 5. 远程通道：Telegram 与微信 ClawBot
+### 5. 远程通道：Telegram、飞书、微信 ClawBot 与 QQ Bot
 
-Andclaw 支持两套远程通道，可在 **MDM 设置 / AI 设置** 中分别配置；二者可同时启用，互不替代本地 Agent 逻辑。
+Andclaw 支持 Telegram、飞书、微信 ClawBot 和 QQ 官方机器人，可在 **MDM 设置 / AI 设置** 中配置。当前一次启用一个远程通道；切换通道不会改变本地 Agent 能力。
 
-**忙碌提示（双通道一致）**：当 **Agent 已在执行任务**时，远程侧再发来**普通文本指令**不会抢占当前任务，而是收到一条**忙碌提示**，请稍后再试或发送 `/stop` 停止当前任务后再下发新指令。`/status` 与 `/stop` 不受此限制（仍可随时查询状态或停止任务）。
+**忙碌提示**：当 **Agent 已在执行任务**时，远程侧再发来**普通文本指令**不会抢占当前任务，而是收到一条**忙碌提示**，请稍后再试或发送 `/stop` 停止当前任务后再下发新指令。`/status` 与 `/stop` 不受此限制（仍可随时查询状态或停止任务）。
 
 #### Telegram Bot
 
@@ -226,6 +226,18 @@ Andclaw 支持两套远程通道，可在 **MDM 设置 / AI 设置** 中分别�
 | `/stop` | 停止当前正在执行的任务 |
 
 截图、拍照、录像、录音、录屏等媒体在成功后**以文件形式**发送到当前 Telegram 对话（受 Chat ID 白名单约束）。
+
+#### 飞书 Bot
+
+在远程通道设置页的飞书配置卡片中填写飞书应用 App ID 和 App Secret，并在飞书开放平台启用机器人及所需消息权限。飞书支持文本指令、`/status`、`/stop` 和图片回传。
+
+#### QQ 官方机器人（Agent / QQ Bot）
+
+在 QQ 开放平台创建 QQ 机器人，并在 **AI 设置 → 远程通道 → QQ Bot** 中填写 AppID 和 ClientSecret。连接状态会显示凭证验证、Gateway 连接及服务器返回的错误详情；配置用户 OpenID 白名单后，仅该 QQ 用户可以控制设备。
+
+- 支持 QQ 私聊下发文本指令、`/status` 和 `/stop`。
+- 支持截图、图片、视频及音频/文件通过 QQ 官方富媒体接口上传并回传。
+- 大文件使用官方分片上传流程；具体可发送类型和额度受 QQ 开放平台权限与频控规则限制。
 
 #### 微信 ClawBot（iLink）
 

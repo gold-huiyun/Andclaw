@@ -11,9 +11,11 @@ import android.widget.Toast
 import com.andforce.andclaw.model.AiAction
 import com.andforce.andclaw.model.ApiConfig
 import com.demo.model.KimiApiClient
+import com.demo.model.KimiApiException
 import com.demo.model.KimiMessage
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -23,6 +25,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.UnknownHostException
 import java.net.SocketTimeoutException
 import java.util.concurrent.TimeUnit
 
@@ -34,6 +39,12 @@ object Utils {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+
+    private val llmClient = OkHttpClient.Builder()
+        .connectTimeout(60, TimeUnit.SECONDS)
+        .readTimeout(120, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 
     /**
@@ -425,16 +436,14 @@ CRITICAL: Your entire response must be parseable as JSON. Any non-JSON text will
     ): String = withContext(Dispatchers.IO) {
 
         val errorJsonStub = { message: String ->
-            "{\"type\": \"error\", \"reason\": \"$message\", \"progress\": \"Error\"}"
+            JSONObject()
+                .put("type", "error")
+                .put("reason", message)
+                .put("progress", "Error")
+                .toString()
         }
 
         try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(60, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
-                .writeTimeout(60, TimeUnit.SECONDS)
-                .build()
-
             val systemPrompt = buildAgentSystemPrompt(userGoal, isDeviceOwner)
             val isKimi = config.provider.equals("Kimi Code", ignoreCase = true)
 
@@ -535,11 +544,11 @@ Respond with JSON only."""
                 .header("Authorization", "Bearer ${config.apiKey}")
                 .build()
 
-            client.newCall(request).execute().use { response ->
+            executeLlmRequestWithConnectRetry(request).use { response ->
                 val responseString = response.body.string()
                 if (!response.isSuccessful) {
                     Log.e(TAG, "OpenAI API Error ${response.code}: $responseString")
-                    return@withContext errorJsonStub("API Error ${response.code}")
+                    return@withContext errorJsonStub("API Error ${response.code}: ${responseString.take(600)}")
                 }
 
                 return@withContext JSONObject(responseString)
@@ -551,16 +560,34 @@ Respond with JSON only."""
         } catch (e: SocketTimeoutException) {
             e.printStackTrace()
             showToastOnMain(context, "Network Timeout. Check your API server.")
-            return@withContext errorJsonStub("Network Timeout")
+            return@withContext errorJsonStub("请求超时 (${e.message ?: "API 响应超时"})，请检查 API 服务状态和网络后重试")
+        } catch (e: KimiApiException) {
+            Log.e(TAG, "Kimi API request failed: ${e.message}", e)
+            return@withContext errorJsonStub("${e.message?.take(600) ?: "Kimi API 请求失败"}")
         } catch (e: IOException) {
             e.printStackTrace()
             showToastOnMain(context, "Network Error: ${e.message}")
-            return@withContext errorJsonStub("Connection Failed")
+            return@withContext errorJsonStub(
+                "网络连接失败 (${e.javaClass.simpleName}): ${e.localizedMessage ?: "请检查网络、API 地址和服务状态"}"
+            )
         } catch (e: Exception) {
             e.printStackTrace()
             val unknownError = "Unexpected error: ${e.message}"
             Log.e(TAG, unknownError, e)
-            return@withContext errorJsonStub("System Error")
+            return@withContext errorJsonStub("请求处理失败: ${e.localizedMessage ?: e.javaClass.simpleName}")
+        }
+    }
+
+    private suspend fun executeLlmRequestWithConnectRetry(request: Request): okhttp3.Response {
+        return try {
+            llmClient.newCall(request).execute()
+        } catch (error: IOException) {
+            if (error !is ConnectException && error !is UnknownHostException && error !is NoRouteToHostException) {
+                throw error
+            }
+            Log.w(TAG, "LLM connection setup failed, retrying once: ${error.message}")
+            delay(500)
+            llmClient.newCall(request).execute()
         }
     }
 

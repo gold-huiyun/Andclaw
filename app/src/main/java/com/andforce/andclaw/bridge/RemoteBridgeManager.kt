@@ -63,6 +63,9 @@ class RemoteBridgeManager(
     private val _qqBotStatus = MutableStateFlow(BridgeStatus.NOT_CONFIGURED)
     override val qqBotStatus: StateFlow<BridgeStatus> = _qqBotStatus.asStateFlow()
 
+    private val _qqBotStatusMessage = MutableStateFlow("未配置")
+    override val qqBotStatusMessage: StateFlow<String> = _qqBotStatusMessage.asStateFlow()
+
     private val _activeRemoteChannel = MutableStateFlow(RemoteChannel.TELEGRAM)
     override val activeRemoteChannel: StateFlow<RemoteChannel> = _activeRemoteChannel.asStateFlow()
 
@@ -329,6 +332,7 @@ class RemoteBridgeManager(
         if (appId.isBlank() || clientSecret.isBlank()) {
             stopQqBotBridgeInternal()
             _qqBotStatus.value = BridgeStatus.NOT_CONFIGURED
+            _qqBotStatusMessage.value = "请填写 QQ Bot AppID 和 ClientSecret"
             return
         }
         val credentials = appId to clientSecret
@@ -341,7 +345,10 @@ class RemoteBridgeManager(
             getClientSecret = { getQqBotClientSecret() },
             getAllowedOpenId = { getQqBotAllowedOpenId() },
             onInbound = { msg -> qqBotInboundHandler?.invoke(msg) ?: Unit },
-            onConnectionStatus = { status -> _qqBotStatus.value = status }
+            onConnectionStatus = { status, message ->
+                _qqBotStatus.value = status
+                _qqBotStatusMessage.value = message
+            }
         )
         qqBotBridge = bridge
         qqBotBridgeActiveCredentials = credentials
@@ -357,6 +364,7 @@ class RemoteBridgeManager(
         qqBotBridge = null
         qqBotBridgeActiveCredentials = null
         _qqBotStatus.value = BridgeStatus.STOPPED
+        _qqBotStatusMessage.value = "已停止"
     }
 
     override suspend fun sendTyping(session: RemoteSession) {

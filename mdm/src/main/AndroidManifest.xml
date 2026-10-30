@@ -124,7 +124,7 @@
             android:exported="true"
             android:theme="@style/Base.Theme.MyApplication"
             android:screenOrientation="portrait"
-            android:launchMode="singleInstance"
+            android:launchMode="singleTask"
             tools:ignore="DiscouragedApi">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

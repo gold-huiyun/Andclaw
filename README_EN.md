@@ -30,7 +30,7 @@
 | **🤏 Human-like Operations** | Simulate tap, swipe, long-press, text input |
 | **📸 Multimedia** | Photo, video recording, screen recording, screenshot, volume control |
 | **📱 Device Management** | Enterprise-grade management in Device Owner mode |
-| **🤖 Remote Control** | Telegram Bot and WeChat ClawBot dual channels |
+| **🤖 Remote Control** | Telegram, Feishu, WeChat ClawBot, and official QQ Bot |
 | **🌍 Multi-language** | Chinese and English interface support |
 
 ## 🚀 Quick Start
@@ -68,6 +68,8 @@ This enables enterprise features: silent app install/uninstall, Kiosk mode, etc.
 
 ### Remote Channels
 
+Only one remote channel is active at a time. Configure the selected channel in MDM / AI Settings.
+
 #### Telegram Bot
 
 1. Message @BotFather on Telegram, create a new bot
@@ -77,6 +79,12 @@ This enables enterprise features: silent app install/uninstall, Kiosk mode, etc.
 #### WeChat ClawBot (iLink)
 
 Scan QR code in AI Settings to bind WeChat ClawBot plugin.
+
+#### Official QQ Bot (Agent / QQ Bot)
+
+Create a QQ Bot in the QQ Open Platform, then enter its AppID and ClientSecret under **AI Settings → Remote Channel → QQ Bot**. The app displays credential/Gateway connection status and server error details. Set an allowed user OpenID to restrict device control to that QQ account.
+
+QQ private chats support text commands, `/status`, `/stop`, and media replies for screenshots, images, videos, and files through the official rich-media upload API. Large files use the official multipart upload flow; platform permissions and rate limits apply.
 
 ### Supported Actions
 

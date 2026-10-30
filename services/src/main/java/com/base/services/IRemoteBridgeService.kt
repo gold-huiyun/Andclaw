@@ -8,6 +8,7 @@ interface IRemoteBridgeService {
     val clawBotLoginStatus: StateFlow<ClawBotLoginStatus>
     val feishuStatus: StateFlow<BridgeStatus>
     val qqBotStatus: StateFlow<BridgeStatus>
+    val qqBotStatusMessage: StateFlow<String>
 
     fun startEligibleBridges()
     fun stopAllBridges()

@@ -2,6 +2,7 @@ package com.demo.model
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -9,6 +10,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import java.net.ConnectException
+import java.net.NoRouteToHostException
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 
 data class KimiMessage(
@@ -99,7 +104,7 @@ object KimiApiClient {
             .header("anthropic-version", "2023-06-01")
             .build()
 
-        client.newCall(request).execute().use { response ->
+        executeWithConnectRetry(request).use { response ->
             val responseBody = response.body?.string() ?: ""
             Log.d(TAG, "chat response: code=${response.code}, bodyLen=${responseBody.length}")
             if (!response.isSuccessful) {
@@ -116,6 +121,19 @@ object KimiApiClient {
                 }
             }
             throw KimiApiException(0, "No text content in response: $responseBody")
+        }
+    }
+
+    private suspend fun executeWithConnectRetry(request: Request): okhttp3.Response {
+        return try {
+            client.newCall(request).execute()
+        } catch (error: IOException) {
+            if (error !is ConnectException && error !is UnknownHostException && error !is NoRouteToHostException) {
+                throw error
+            }
+            Log.w(TAG, "Kimi connection setup failed, retrying once: ${error.message}")
+            delay(500)
+            client.newCall(request).execute()
         }
     }
 }
